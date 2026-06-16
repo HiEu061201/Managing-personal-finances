@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { categoryApi } from '../api/services';
-import { Plus, Edit2, Trash2, X, Tags } from 'lucide-react';
+import { Plus, Edit2, Trash2, X } from 'lucide-react';
 
 interface Category {
   _id: string;
