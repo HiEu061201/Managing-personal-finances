@@ -7,11 +7,22 @@ import Category from '../models/Category';
 
 export const register = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email, password } = req.body;
+    const { email, username, password } = req.body;
     
-    const existingUser = await User.findOne({ email });
+    // Check if email or username already exists
+    const existingUser = await User.findOne({ 
+      $or: [
+        { email },
+        { username: { $exists: true, $ne: null, $eq: username } }
+      ]
+    });
+    
     if (existingUser) {
-      res.status(400).json({ status: 'error', message: 'Email already exists' });
+      if (existingUser.email === email) {
+        res.status(400).json({ status: 'error', message: 'Email already exists' });
+      } else {
+        res.status(400).json({ status: 'error', message: 'Username already exists' });
+      }
       return;
     }
 
@@ -20,6 +31,7 @@ export const register = async (req: Request, res: Response): Promise<void> => {
 
     const newUser = new User({
       email,
+      username: username || undefined,
       passwordHash
     });
 
@@ -53,9 +65,12 @@ export const register = async (req: Request, res: Response): Promise<void> => {
 
 export const login = async (req: Request, res: Response): Promise<void> => {
   try {
-    const { email, password } = req.body;
+    const { identifier, password } = req.body; // identifier can be email or username
 
-    const user = await User.findOne({ email });
+    const user = await User.findOne({
+      $or: [{ email: identifier }, { username: identifier }]
+    });
+    
     if (!user) {
       res.status(400).json({ status: 'error', message: 'Invalid credentials' });
       return;
@@ -78,7 +93,7 @@ export const login = async (req: Request, res: Response): Promise<void> => {
       status: 'success',
       data: {
         token,
-        user: { id: user._id, email: user.email }
+        user: { id: user._id, email: user.email, username: user.username }
       }
     });
   } catch (error: any) {

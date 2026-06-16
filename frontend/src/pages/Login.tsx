@@ -4,7 +4,8 @@ import axios from '../api/axios';
 import { useAuthStore } from '../store/useAuthStore';
 
 const Login = () => {
-  const [email, setEmail] = useState('');
+  const [identifier, setIdentifier] = useState(localStorage.getItem('remembered_identifier') || '');
+  const [rememberMe, setRememberMe] = useState(!!localStorage.getItem('remembered_identifier'));
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
@@ -17,8 +18,15 @@ const Login = () => {
     setLoading(true);
 
     try {
-      const response: any = await axios.post('/auth/login', { email, password });
+      const response: any = await axios.post('/auth/login', { identifier, password });
       login(response.data.user, response.data.token);
+      
+      if (rememberMe) {
+        localStorage.setItem('remembered_identifier', identifier);
+      } else {
+        localStorage.removeItem('remembered_identifier');
+      }
+      
       navigate('/dashboard');
     } catch (err: any) {
       setError(err.message || 'Đăng nhập thất bại');
@@ -49,14 +57,15 @@ const Login = () => {
           )}
           <div className="rounded-md shadow-sm space-y-4">
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Email hoặc Tên đăng nhập</label>
               <input
-                type="email"
+                type="text"
                 required
                 className="appearance-none relative block w-full px-3 py-2 border border-slate-300 placeholder-slate-400 text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm transition-shadow"
-                placeholder="Nhập email của bạn"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
+                placeholder="Nhập email hoặc tên đăng nhập"
+                value={identifier}
+                onChange={(e) => setIdentifier(e.target.value)}
+                autoComplete="username"
               />
             </div>
             <div>
@@ -68,7 +77,20 @@ const Login = () => {
                 placeholder="Nhập mật khẩu"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
+                autoComplete="current-password"
               />
+            </div>
+            <div className="flex items-center">
+              <input
+                id="remember-me"
+                type="checkbox"
+                className="h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-slate-300 rounded cursor-pointer"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+              />
+              <label htmlFor="remember-me" className="ml-2 block text-sm text-slate-900 cursor-pointer select-none">
+                Ghi nhớ tài khoản
+              </label>
             </div>
           </div>
 
