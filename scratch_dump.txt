@@ -1,0 +1,2728 @@
+﻿==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\backend\src\controllers\authController.ts ====
+import { Request, Response } from 'express';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
+import User from '../models/User';
+import Wallet from '../models/Wallet';
+import Category from '../models/Category';
+
+export const register = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, password } = req.body;
+    
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      res.status(400).json({ status: 'error', message: 'Email already exists' });
+      return;
+    }
+
+    const salt = await bcrypt.genSalt(10);
+    const passwordHash = await bcrypt.hash(password, salt);
+
+    const newUser = new User({
+      email,
+      passwordHash
+    });
+
+    await newUser.save();
+
+    // Create default wallet
+    const defaultWallet = new Wallet({
+      user_id: newUser._id,
+      name: 'VÃ­ tiá»n máº·t',
+      balance: 0,
+      isDefault: true
+    });
+    await defaultWallet.save();
+
+    // Create default categories
+    const defaultCategories = [
+      { user_id: newUser._id, name: 'Ä‚n uá»‘ng', type: 'expense', color: '#ef4444', icon: 'ðŸ”' },
+      { user_id: newUser._id, name: 'Di chuyá»ƒn', type: 'expense', color: '#f59e0b', icon: 'ðŸš—' },
+      { user_id: newUser._id, name: 'Mua sáº¯m', type: 'expense', color: '#ec4899', icon: 'ðŸ›ï¸' },
+      { user_id: newUser._id, name: 'HÃ³a Ä‘Æ¡n', type: 'expense', color: '#8b5cf6', icon: 'ðŸ“„' },
+      { user_id: newUser._id, name: 'LÆ°Æ¡ng', type: 'income', color: '#10b981', icon: 'ðŸ’°' },
+      { user_id: newUser._id, name: 'Äáº§u tÆ°', type: 'income', color: '#3b82f6', icon: 'ðŸ“ˆ' },
+    ];
+    await Category.insertMany(defaultCategories);
+
+    res.status(201).json({ status: 'success', message: 'User registered successfully' });
+  } catch (error: any) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+export const login = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const { email, password } = req.body;
+
+    const user = await User.findOne({ email });
+    if (!user) {
+      res.status(400).json({ status: 'error', message: 'Invalid credentials' });
+      return;
+    }
+
+    const isMatch = await bcrypt.compare(password, user.passwordHash);
+    if (!isMatch) {
+      res.status(400).json({ status: 'error', message: 'Invalid credentials' });
+      return;
+    }
+
+    const token = jwt.sign({ userId: user._id }, process.env.JWT_SECRET || 'secret', { expiresIn: '1d' });
+
+    res.json({
+      status: 'success',
+      data: {
+        token,
+        user: { id: user._id, email: user.email }
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\backend\src\controllers\budgetController.ts ====
+import { Request, Response } from 'express';
+import Budget from '../models/Budget';
+
+export const getBudgets = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).userId;
+    const { month } = req.query; // 'YYYY-MM'
+
+    const filter: any = { user_id: userId };
+    if (month) filter.month = month;
+
+    const budgets = await Budget.find(filter).populate('category_id', 'name icon color');
+    res.json({ status: 'success', data: budgets });
+  } catch (error: any) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+export const createBudget = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).userId;
+    const { category_id, amount, month } = req.body;
+
+    const newBudget = new Budget({
+      user_id: userId,
+      category_id: category_id || undefined,
+      amount,
+      month
+    });
+
+    await newBudget.save();
+    res.status(201).json({ status: 'success', data: newBudget });
+  } catch (error: any) {
+    if (error.code === 11000) {
+      res.status(400).json({ status: 'error', message: 'Budget for this category in this month already exists' });
+      return;
+    }
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+export const updateBudget = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).userId;
+    const { id } = req.params;
+    const { amount } = req.body;
+
+    const budget = await Budget.findOne({ _id: id, user_id: userId });
+    if (!budget) {
+      res.status(404).json({ status: 'error', message: 'Budget not found' });
+      return;
+    }
+
+    if (amount !== undefined) budget.amount = amount;
+
+    await budget.save();
+    res.json({ status: 'success', data: budget });
+  } catch (error: any) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+export const deleteBudget = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).user.userId;
+    const { id } = req.params;
+
+    await Budget.findOneAndDelete({ _id: id, user_id: userId });
+    res.json({ status: 'success', message: 'Budget deleted successfully' });
+  } catch (error: any) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\backend\src\controllers\categoryController.ts ====
+import { Request, Response } from 'express';
+import Category from '../models/Category';
+import Transaction from '../models/Transaction';
+
+export const getCategories = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).userId;
+    let categories = await Category.find({ user_id: userId });
+    
+    if (categories.length === 0) {
+      const defaultCategories = [
+        { user_id: userId, name: 'Ä‚n uá»‘ng', type: 'expense', color: '#ef4444', icon: 'ðŸ”' },
+        { user_id: userId, name: 'Di chuyá»ƒn', type: 'expense', color: '#f59e0b', icon: 'ðŸš—' },
+        { user_id: userId, name: 'Mua sáº¯m', type: 'expense', color: '#ec4899', icon: 'ðŸ›ï¸' },
+        { user_id: userId, name: 'HÃ³a Ä‘Æ¡n', type: 'expense', color: '#8b5cf6', icon: 'ðŸ“„' },
+        { user_id: userId, name: 'LÆ°Æ¡ng', type: 'income', color: '#10b981', icon: 'ðŸ’°' },
+        { user_id: userId, name: 'Äáº§u tÆ°', type: 'income', color: '#3b82f6', icon: 'ðŸ“ˆ' },
+      ];
+      categories = await Category.insertMany(defaultCategories);
+    }
+
+    res.json({ status: 'success', data: categories });
+  } catch (error: any) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+export const createCategory = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).userId;
+    const { name, type, color, icon } = req.body;
+
+    const newCategory = new Category({
+      user_id: userId,
+      name,
+      type,
+      color,
+      icon
+    });
+
+    await newCategory.save();
+    res.status(201).json({ status: 'success', data: newCategory });
+  } catch (error: any) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+export const updateCategory = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).userId;
+    const { id } = req.params;
+    const { name, type, color, icon } = req.body;
+
+    const category = await Category.findOne({ _id: id, user_id: userId });
+    if (!category) {
+      res.status(404).json({ status: 'error', message: 'Category not found' });
+      return;
+    }
+
+    if (name) category.name = name;
+    if (type) category.type = type;
+    if (color) category.color = color;
+    if (icon) category.icon = icon;
+
+    await category.save();
+    res.json({ status: 'success', data: category });
+  } catch (error: any) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+export const deleteCategory = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).user.userId;
+    const { id } = req.params;
+
+    const txCount = await Transaction.countDocuments({ category_id: id, user_id: userId });
+    if (txCount > 0) {
+      res.status(400).json({ status: 'error', message: 'Cannot delete category containing transactions' });
+      return;
+    }
+
+    await Category.findOneAndDelete({ _id: id, user_id: userId });
+    res.json({ status: 'success', message: 'Category deleted successfully' });
+  } catch (error: any) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\backend\src\controllers\transactionController.ts ====
+import { Request, Response } from 'express';
+import Transaction from '../models/Transaction';
+import Wallet from '../models/Wallet';
+import mongoose from 'mongoose';
+
+export const getTransactions = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).userId;
+    const transactions = await Transaction.find({ user_id: userId })
+      .populate('wallet_id', 'name')
+      .populate('category_id', 'name icon color')
+      .sort({ date: -1 });
+    res.json({ status: 'success', data: transactions });
+  } catch (error: any) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+export const createTransaction = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).userId;
+    const { wallet_id, category_id, type, amount, date, category, note } = req.body;
+
+    const wallet = await Wallet.findOne({ _id: wallet_id, user_id: userId });
+    if (!wallet) {
+      res.status(404).json({ status: 'error', message: 'Wallet not found' });
+      return;
+    }
+
+    const transaction = new Transaction({
+      user_id: userId,
+      wallet_id,
+      category_id,
+      type,
+      amount,
+      date,
+      category,
+      note
+    });
+
+    await transaction.save();
+
+    // Update wallet balance
+    if (type === 'income') {
+      wallet.balance += amount;
+    } else {
+      wallet.balance -= amount;
+    }
+    await wallet.save();
+
+    res.status(201).json({ status: 'success', data: transaction });
+  } catch (error: any) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+export const updateTransaction = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).userId;
+    const { id } = req.params;
+    const updates = req.body;
+
+    const oldTransaction = await Transaction.findOne({ _id: id, user_id: userId });
+    if (!oldTransaction) {
+      res.status(404).json({ status: 'error', message: 'Transaction not found' });
+      return;
+    }
+
+    // Revert old transaction effect on old wallet
+    const oldWallet = await Wallet.findOne({ _id: oldTransaction.wallet_id, user_id: userId });
+    if (oldWallet) {
+      if (oldTransaction.type === 'income') {
+        oldWallet.balance -= oldTransaction.amount;
+      } else {
+        oldWallet.balance += oldTransaction.amount;
+      }
+      await oldWallet.save();
+    }
+
+    // Apply updates
+    Object.assign(oldTransaction, updates);
+    await oldTransaction.save();
+
+    // Apply new transaction effect on new wallet
+    const newWallet = await Wallet.findOne({ _id: oldTransaction.wallet_id, user_id: userId });
+    if (newWallet) {
+      if (oldTransaction.type === 'income') {
+        newWallet.balance += oldTransaction.amount;
+      } else {
+        newWallet.balance -= oldTransaction.amount;
+      }
+      await newWallet.save();
+    }
+
+    res.json({ status: 'success', data: oldTransaction });
+  } catch (error: any) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+export const deleteTransaction = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).userId;
+    const { id } = req.params;
+
+    const transaction = await Transaction.findOneAndDelete({ _id: id, user_id: userId });
+
+    if (!transaction) {
+      res.status(404).json({ status: 'error', message: 'Transaction not found' });
+      return;
+    }
+
+    // Revert wallet balance
+    const wallet = await Wallet.findOne({ _id: transaction.wallet_id, user_id: userId });
+    if (wallet) {
+      if (transaction.type === 'income') {
+        wallet.balance -= transaction.amount;
+      } else {
+        wallet.balance += transaction.amount;
+      }
+      await wallet.save();
+    }
+
+    res.json({ status: 'success', message: 'Transaction deleted' });
+  } catch (error: any) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+export const getDashboardStats = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = new mongoose.Types.ObjectId((req as any).userId);
+    const { month } = req.query; // 'YYYY-MM' format
+
+    let firstDay, lastDay;
+    if (month && typeof month === 'string') {
+      const [year, m] = month.split('-');
+      firstDay = new Date(parseInt(year), parseInt(m) - 1, 1);
+      lastDay = new Date(parseInt(year), parseInt(m), 0, 23, 59, 59);
+    } else {
+      // Default to all time if no month specified for dashboard? Or current month?
+      // Spec says "Dashboard thÃªm UI chá»n khoáº£ng thá»i gian". Usually default is current month.
+      const date = new Date();
+      firstDay = new Date(date.getFullYear(), date.getMonth(), 1);
+      lastDay = new Date(date.getFullYear(), date.getMonth() + 1, 0, 23, 59, 59);
+    }
+
+    const stats = await Transaction.aggregate([
+      { 
+        $match: { 
+          user_id: userId,
+          date: { $gte: firstDay, $lte: lastDay }
+        }
+      },
+      {
+        $group: {
+          _id: '$type',
+          total: { $sum: '$amount' }
+        }
+      }
+    ]);
+
+    let income = 0;
+    let expense = 0;
+
+    stats.forEach(stat => {
+      if (stat._id === 'income') income = stat.total;
+      if (stat._id === 'expense') expense = stat.total;
+    });
+
+    const wallets = await Wallet.find({ user_id: userId });
+    const totalBalance = wallets.reduce((acc, w) => acc + w.balance, 0);
+
+    res.json({ 
+      status: 'success', 
+      data: {
+        income,
+        expense,
+        balance: totalBalance,
+        wallets
+      }
+    });
+  } catch (error: any) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\backend\src\controllers\walletController.ts ====
+import { Request, Response } from 'express';
+import Wallet from '../models/Wallet';
+import Transaction from '../models/Transaction';
+
+export const getWallets = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).userId;
+    let wallets = await Wallet.find({ user_id: userId });
+    
+    if (wallets.length === 0) {
+      const defaultWallet = new Wallet({
+        user_id: userId,
+        name: 'VÃ­ tiá»n máº·t',
+        balance: 0,
+        isDefault: true
+      });
+      await defaultWallet.save();
+      wallets = [defaultWallet];
+    }
+
+    res.json({ status: 'success', data: wallets });
+  } catch (error: any) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+export const createWallet = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).userId;
+    const { name, balance, isDefault } = req.body;
+
+    if (isDefault) {
+      await Wallet.updateMany({ user_id: userId }, { isDefault: false });
+    }
+
+    const newWallet = new Wallet({
+      user_id: userId,
+      name,
+      balance: balance || 0,
+      isDefault: isDefault || false
+    });
+
+    await newWallet.save();
+    res.status(201).json({ status: 'success', data: newWallet });
+  } catch (error: any) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+export const updateWallet = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).userId;
+    const { id } = req.params;
+    const { name, balance, isDefault } = req.body;
+
+    const wallet = await Wallet.findOne({ _id: id, user_id: userId });
+    if (!wallet) {
+      res.status(404).json({ status: 'error', message: 'Wallet not found' });
+      return;
+    }
+
+    if (isDefault) {
+      await Wallet.updateMany({ user_id: userId, _id: { $ne: id } }, { isDefault: false });
+    }
+
+    wallet.name = name || wallet.name;
+    if (balance !== undefined) wallet.balance = balance;
+    if (isDefault !== undefined) wallet.isDefault = isDefault;
+
+    await wallet.save();
+    res.json({ status: 'success', data: wallet });
+  } catch (error: any) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+export const deleteWallet = async (req: Request, res: Response): Promise<void> => {
+  try {
+    const userId = (req as any).user.userId;
+    const { id } = req.params;
+
+    const txCount = await Transaction.countDocuments({ wallet_id: id, user_id: userId });
+    if (txCount > 0) {
+      res.status(400).json({ status: 'error', message: 'Cannot delete wallet containing transactions' });
+      return;
+    }
+
+    await Wallet.findOneAndDelete({ _id: id, user_id: userId });
+    res.json({ status: 'success', message: 'Wallet deleted successfully' });
+  } catch (error: any) {
+    res.status(500).json({ status: 'error', message: error.message });
+  }
+};
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\backend\src\middlewares\authMiddleware.ts ====
+import { Request, Response, NextFunction } from 'express';
+import jwt from 'jsonwebtoken';
+
+interface JwtPayload {
+  userId: string;
+}
+
+export const authMiddleware = (req: Request, res: Response, next: NextFunction): void => {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    res.status(401).json({ status: 'error', message: 'No token provided' });
+    return;
+  }
+
+  const token = authHeader.split(' ')[1];
+  try {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || 'secret') as JwtPayload;
+    (req as any).userId = decoded.userId;
+    next();
+  } catch (error) {
+    res.status(401).json({ status: 'error', message: 'Invalid token' });
+  }
+};
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\backend\src\models\Budget.ts ====
+import mongoose, { Document, Schema } from 'mongoose';
+
+export interface IBudget extends Document {
+  user_id: mongoose.Types.ObjectId;
+  category_id?: mongoose.Types.ObjectId;
+  amount: number;
+  month: string; // Format: 'YYYY-MM'
+}
+
+const budgetSchema = new Schema<IBudget>(
+  {
+    user_id: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    category_id: { type: Schema.Types.ObjectId, ref: 'Category' },
+    amount: { type: Number, required: true },
+    month: { type: String, required: true }
+  },
+  { timestamps: true }
+);
+
+// Prevent duplicate budget for the same category in the same month for a user
+budgetSchema.index({ user_id: 1, category_id: 1, month: 1 }, { unique: true });
+
+export default mongoose.model<IBudget>('Budget', budgetSchema);
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\backend\src\models\Category.ts ====
+import mongoose, { Document, Schema } from 'mongoose';
+
+export interface ICategory extends Document {
+  user_id: mongoose.Types.ObjectId;
+  name: string;
+  type: 'income' | 'expense';
+  color?: string;
+  icon?: string;
+}
+
+const categorySchema = new Schema<ICategory>(
+  {
+    user_id: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    name: { type: String, required: true },
+    type: { type: String, enum: ['income', 'expense'], required: true },
+    color: { type: String, default: '#4f46e5' },
+    icon: { type: String, default: 'ðŸ·ï¸' }
+  },
+  { timestamps: true }
+);
+
+export default mongoose.model<ICategory>('Category', categorySchema);
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\backend\src\models\Transaction.ts ====
+import mongoose, { Schema, Document } from 'mongoose';
+
+export interface ITransaction extends Document {
+  user_id: mongoose.Types.ObjectId;
+  wallet_id: mongoose.Types.ObjectId;
+  category_id?: mongoose.Types.ObjectId;
+  type: 'income' | 'expense';
+  amount: number;
+  date: Date;
+  category: string;
+  note?: string;
+}
+
+const TransactionSchema: Schema = new Schema({
+  user_id: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  wallet_id: { type: Schema.Types.ObjectId, ref: 'Wallet', required: true },
+  category_id: { type: Schema.Types.ObjectId, ref: 'Category' },
+  type: { type: String, enum: ['income', 'expense'], required: true },
+  amount: { type: Number, required: true },
+  date: { type: Date, required: true },
+  category: { type: String, required: true },
+  note: { type: String }
+}, {
+  timestamps: true
+});
+
+export default mongoose.model<ITransaction>('Transaction', TransactionSchema);
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\backend\src\models\User.ts ====
+import mongoose, { Schema, Document } from 'mongoose';
+
+export interface IUser extends Document {
+  email: string;
+  passwordHash: string;
+}
+
+const UserSchema: Schema = new Schema({
+  email: { type: String, required: true, unique: true },
+  passwordHash: { type: String, required: true }
+}, {
+  timestamps: true
+});
+
+export default mongoose.model<IUser>('User', UserSchema);
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\backend\src\models\Wallet.ts ====
+import mongoose, { Document, Schema } from 'mongoose';
+
+export interface IWallet extends Document {
+  user_id: mongoose.Types.ObjectId;
+  name: string;
+  balance: number;
+  isDefault: boolean;
+}
+
+const walletSchema = new Schema<IWallet>(
+  {
+    user_id: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+    name: { type: String, required: true },
+    balance: { type: Number, default: 0 },
+    isDefault: { type: Boolean, default: false }
+  },
+  { timestamps: true }
+);
+
+export default mongoose.model<IWallet>('Wallet', walletSchema);
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\backend\src\routes\authRoutes.ts ====
+import { Router } from 'express';
+import { register, login } from '../controllers/authController';
+
+const router = Router();
+
+router.post('/register', register);
+router.post('/login', login);
+
+export default router;
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\backend\src\routes\budgetRoutes.ts ====
+import express from 'express';
+import { getBudgets, createBudget, updateBudget, deleteBudget } from '../controllers/budgetController';
+import { authMiddleware } from '../middlewares/authMiddleware';
+
+const router = express.Router();
+
+router.use(authMiddleware);
+
+router.get('/', getBudgets);
+router.post('/', createBudget);
+router.put('/:id', updateBudget);
+router.delete('/:id', deleteBudget);
+
+export default router;
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\backend\src\routes\categoryRoutes.ts ====
+import express from 'express';
+import { getCategories, createCategory, updateCategory, deleteCategory } from '../controllers/categoryController';
+import { authMiddleware } from '../middlewares/authMiddleware';
+
+const router = express.Router();
+
+router.use(authMiddleware);
+
+router.get('/', getCategories);
+router.post('/', createCategory);
+router.put('/:id', updateCategory);
+router.delete('/:id', deleteCategory);
+
+export default router;
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\backend\src\routes\transactionRoutes.ts ====
+import { Router } from 'express';
+import { getTransactions, createTransaction, updateTransaction, deleteTransaction, getDashboardStats } from '../controllers/transactionController';
+import { authMiddleware } from '../middlewares/authMiddleware';
+
+const router = Router();
+
+router.use(authMiddleware);
+
+router.get('/dashboard', getDashboardStats);
+router.get('/', getTransactions);
+router.post('/', createTransaction);
+router.put('/:id', updateTransaction);
+router.delete('/:id', deleteTransaction);
+
+export default router;
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\backend\src\routes\walletRoutes.ts ====
+import express from 'express';
+import { getWallets, createWallet, updateWallet, deleteWallet } from '../controllers/walletController';
+import { authMiddleware } from '../middlewares/authMiddleware';
+
+const router = express.Router();
+
+router.use(authMiddleware);
+
+router.get('/', getWallets);
+router.post('/', createWallet);
+router.put('/:id', updateWallet);
+router.delete('/:id', deleteWallet);
+
+export default router;
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\backend\src\index.ts ====
+import express from 'express';
+import mongoose from 'mongoose';
+import { MongoMemoryServer } from 'mongodb-memory-server';
+import cors from 'cors';
+import helmet from 'helmet';
+import morgan from 'morgan';
+import dotenv from 'dotenv';
+import authRoutes from './routes/authRoutes';
+import transactionRoutes from './routes/transactionRoutes';
+import walletRoutes from './routes/walletRoutes';
+import categoryRoutes from './routes/categoryRoutes';
+import budgetRoutes from './routes/budgetRoutes';
+
+dotenv.config();
+
+const app = express();
+const PORT = process.env.PORT || 5000;
+
+app.use(cors());
+app.use(helmet());
+app.use(morgan('dev'));
+app.use(express.json());
+
+app.use('/api/auth', authRoutes);
+app.use('/api/transactions', transactionRoutes);
+app.use('/api/wallets', walletRoutes);
+app.use('/api/categories', categoryRoutes);
+app.use('/api/budgets', budgetRoutes);
+
+const startServer = async () => {
+  try {
+    let mongoUri = process.env.MONGODB_URI;
+    
+    if (!mongoUri) {
+      console.log('No MONGODB_URI found. Starting MongoDB Memory Server...');
+      const mongoServer = await MongoMemoryServer.create();
+      mongoUri = mongoServer.getUri();
+      console.log(`MongoDB Memory Server started at ${mongoUri}`);
+    }
+
+    await mongoose.connect(mongoUri);
+    console.log('Connected to MongoDB');
+
+    app.listen(PORT, () => {
+      console.log(`Server is running on port ${PORT}`);
+    });
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    process.exit(1);
+  }
+};
+
+startServer();
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\frontend\src\api\axios.ts ====
+import axios from 'axios';
+import { useAuthStore } from '../store/useAuthStore';
+
+const instance = axios.create({
+  baseURL: 'http://localhost:5000/api',
+  headers: {
+    'Content-Type': 'application/json'
+  }
+});
+
+instance.interceptors.request.use(
+  (config) => {
+    const token = useAuthStore.getState().token;
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`;
+    }
+    return config;
+  },
+  (error) => Promise.reject(error)
+);
+
+instance.interceptors.response.use(
+  (response) => response.data,
+  (error) => {
+    if (error.response?.status === 401) {
+      useAuthStore.getState().logout();
+    }
+    return Promise.reject(error.response?.data || error);
+  }
+);
+
+export default instance;
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\frontend\src\api\services.ts ====
+import axios from './axios';
+
+export const walletApi = {
+  getWallets: () => axios.get('/wallets'),
+  createWallet: (data: any) => axios.post('/wallets', data),
+  updateWallet: (id: string, data: any) => axios.put(`/wallets/${id}`, data),
+  deleteWallet: (id: string) => axios.delete(`/wallets/${id}`)
+};
+
+export const categoryApi = {
+  getCategories: () => axios.get('/categories'),
+  createCategory: (data: any) => axios.post('/categories', data),
+  updateCategory: (id: string, data: any) => axios.put(`/categories/${id}`, data),
+  deleteCategory: (id: string) => axios.delete(`/categories/${id}`)
+};
+
+export const budgetApi = {
+  getBudgets: (month?: string) => axios.get('/budgets', { params: { month } }),
+  createBudget: (data: any) => axios.post('/budgets', data),
+  updateBudget: (id: string, data: any) => axios.put(`/budgets/${id}`, data),
+  deleteBudget: (id: string) => axios.delete(`/budgets/${id}`)
+};
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\frontend\src\components\Layout.tsx ====
+import { Outlet, Link, useNavigate, useLocation } from 'react-router-dom';
+import { useAuthStore } from '../store/useAuthStore';
+import { LayoutDashboard, Receipt, LogOut, Wallet, Target, Tags } from 'lucide-react';
+
+const Layout = () => {
+  const { user, logout } = useAuthStore();
+  const navigate = useNavigate();
+  const location = useLocation();
+
+  const handleLogout = () => {
+    logout();
+    navigate('/login');
+  };
+
+  const navItems = [
+    { path: '/dashboard', label: 'Tá»•ng quan', icon: <LayoutDashboard className="w-6 h-6 md:w-5 md:h-5" /> },
+    { path: '/transactions', label: 'Giao dá»‹ch', icon: <Receipt className="w-6 h-6 md:w-5 md:h-5" /> },
+    { path: '/wallets', label: 'VÃ­ cá»§a tÃ´i', icon: <Wallet className="w-6 h-6 md:w-5 md:h-5" /> },
+    { path: '/budgets', label: 'NgÃ¢n sÃ¡ch', icon: <Target className="w-6 h-6 md:w-5 md:h-5" /> },
+    { path: '/categories', label: 'Danh má»¥c', icon: <Tags className="w-6 h-6 md:w-5 md:h-5" /> },
+  ];
+
+  return (
+    <div className="flex h-screen bg-slate-50 overflow-hidden">
+      {/* Desktop Sidebar */}
+      <aside className="hidden md:flex w-64 bg-white border-r border-slate-200 shadow-sm flex-col">
+        <div className="p-6 border-b border-slate-100">
+          <h1 className="text-xl font-bold text-indigo-600 flex items-center gap-2">
+            <span className="bg-indigo-100 p-2 rounded-lg text-xl">ðŸ’°</span>
+            Quáº£n LÃ½ Chi TiÃªu
+          </h1>
+        </div>
+        
+        <nav className="flex-1 p-4 space-y-2">
+          {navItems.map((item) => {
+            const isActive = location.pathname.startsWith(item.path);
+            return (
+              <Link
+                key={item.path}
+                to={item.path}
+                className={`flex items-center gap-3 px-4 py-3 rounded-xl transition-all duration-200 ${
+                  isActive 
+                    ? 'bg-indigo-50 text-indigo-600 font-medium shadow-sm' 
+                    : 'text-slate-500 hover:bg-slate-50 hover:text-indigo-500'
+                }`}
+              >
+                {item.icon}
+                {item.label}
+              </Link>
+            );
+          })}
+        </nav>
+
+        <div className="p-4 border-t border-slate-100">
+          <div className="mb-4 px-4">
+            <p className="text-sm text-slate-400">Xin chÃ o,</p>
+            <p className="font-semibold text-slate-700 truncate">{user?.email}</p>
+          </div>
+          <button
+            onClick={handleLogout}
+            className="flex items-center gap-2 w-full px-4 py-2.5 text-rose-600 hover:bg-rose-50 rounded-xl transition-colors font-medium"
+          >
+            <LogOut className="w-5 h-5" />
+            ÄÄƒng xuáº¥t
+          </button>
+        </div>
+      </aside>
+
+      {/* Main Content Area */}
+      <main className="flex-1 overflow-y-auto pb-20 md:pb-0 relative">
+        {/* Mobile Header */}
+        <div className="md:hidden sticky top-0 z-10 bg-white/80 backdrop-blur-md border-b border-slate-200 px-4 py-4 flex justify-between items-center shadow-sm">
+          <h1 className="text-lg font-bold text-indigo-600 flex items-center gap-2">
+            <span className="text-xl">ðŸ’°</span>
+            Chi TiÃªu
+          </h1>
+          <button onClick={handleLogout} className="p-2 text-rose-500 bg-rose-50 rounded-full">
+            <LogOut className="w-5 h-5" />
+          </button>
+        </div>
+
+        <div className="p-4 md:p-8 max-w-7xl mx-auto">
+          <Outlet />
+        </div>
+      </main>
+
+      {/* Mobile Bottom Navigation */}
+      <nav className="md:hidden fixed bottom-0 w-full bg-white border-t border-slate-200 flex justify-around items-center p-2 pb-safe z-20 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)]">
+        {navItems.map((item) => {
+          const isActive = location.pathname.startsWith(item.path);
+          return (
+            <Link
+              key={item.path}
+              to={item.path}
+              className={`flex flex-col items-center gap-1 p-2 min-w-[80px] transition-colors ${
+                isActive ? 'text-indigo-600' : 'text-slate-400'
+              }`}
+            >
+              <div className={`p-1.5 rounded-full transition-colors ${isActive ? 'bg-indigo-50' : ''}`}>
+                {item.icon}
+              </div>
+              <span className={`text-[10px] font-medium ${isActive ? 'font-semibold' : ''}`}>
+                {item.label}
+              </span>
+            </Link>
+          );
+        })}
+      </nav>
+    </div>
+  );
+};
+
+export default Layout;
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\frontend\src\pages\Budgets.tsx ====
+import { useEffect, useState } from 'react';
+import { budgetApi, categoryApi } from '../api/services';
+import { Plus, Edit2, Trash2, X, Target } from 'lucide-react';
+
+interface Category {
+  _id: string;
+  name: string;
+  type: 'income' | 'expense';
+  color: string;
+  icon: string;
+}
+
+interface Budget {
+  _id: string;
+  category_id?: Category;
+  amount: number;
+  month: string;
+}
+
+const Budgets = () => {
+  const [budgets, setBudgets] = useState<Budget[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  
+  // Máº·c Ä‘á»‹nh chá»n thÃ¡ng hiá»‡n táº¡i
+  const currentDate = new Date();
+  const currentMonthStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`;
+  const [selectedMonth, setSelectedMonth] = useState(currentMonthStr);
+  
+  const [formData, setFormData] = useState({
+    category_id: '',
+    amount: '',
+    month: currentMonthStr
+  });
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      const [budgetsRes, categoriesRes] = await Promise.all([
+        budgetApi.getBudgets(selectedMonth),
+        categoryApi.getCategories()
+      ]);
+      setBudgets(budgetsRes.data || []);
+      // Chá»‰ láº¥y danh má»¥c chi tiÃªu cho ngÃ¢n sÃ¡ch
+      const categories = categoriesRes.data || [];
+      setCategories(categories.filter((c: Category) => c.type === 'expense'));
+    } catch (error) {
+      console.error('Failed to fetch budgets data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, [selectedMonth]);
+
+  const handleOpenModal = (budget?: Budget) => {
+    if (budget) {
+      setEditingId(budget._id);
+      setFormData({
+        category_id: budget.category_id ? budget.category_id._id : '',
+        amount: budget.amount.toString(),
+        month: budget.month
+      });
+    } else {
+      setEditingId(null);
+      setFormData({ category_id: '', amount: '', month: selectedMonth });
+    }
+    setIsModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setEditingId(null);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const payload = {
+        category_id: formData.category_id || null, // null = NgÃ¢n sÃ¡ch tá»•ng
+        amount: Number(formData.amount),
+        month: formData.month
+      };
+
+      if (editingId) {
+        await budgetApi.updateBudget(editingId, payload);
+      } else {
+        await budgetApi.createBudget(payload);
+      }
+      fetchData();
+      handleCloseModal();
+    } catch (error: any) {
+      console.error('Failed to save budget:', error);
+      alert(error.response?.data?.message || 'CÃ³ lá»—i xáº£y ra khi lÆ°u ngÃ¢n sÃ¡ch');
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (window.confirm('Báº¡n cÃ³ cháº¯c muá»‘n xÃ³a ngÃ¢n sÃ¡ch nÃ y?')) {
+      try {
+        await budgetApi.deleteBudget(id);
+        fetchData();
+      } catch (error: any) {
+        console.error('Failed to delete budget:', error);
+        alert(error.response?.data?.message || 'CÃ³ lá»—i xáº£y ra khi xÃ³a ngÃ¢n sÃ¡ch');
+      }
+    }
+  };
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(amount);
+  };
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-500">
+      <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
+        <h2 className="text-xl md:text-2xl font-bold text-slate-800 flex items-center gap-2">
+          <Target className="w-6 h-6 text-indigo-600" />
+          NgÃ¢n sÃ¡ch
+        </h2>
+        
+        <div className="flex gap-2 w-full md:w-auto">
+          <input
+            type="month"
+            value={selectedMonth}
+            onChange={(e) => setSelectedMonth(e.target.value)}
+            className="flex-1 md:flex-none px-4 py-2 bg-white border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-medium text-slate-700 shadow-sm"
+          />
+          <button
+            onClick={() => handleOpenModal()}
+            className="flex items-center justify-center gap-2 bg-indigo-600 text-white px-3 md:px-4 py-2 rounded-xl hover:bg-indigo-700 transition-colors shadow-sm font-medium text-sm md:text-base flex-1 md:flex-none"
+          >
+            <Plus className="w-5 h-5" />
+            <span>ThÃªm</span>
+          </button>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center items-center py-20 text-slate-500">Äang táº£i dá»¯ liá»‡u...</div>
+      ) : budgets.length === 0 ? (
+        <div className="bg-white p-10 rounded-3xl shadow-sm border border-slate-100 text-center">
+          <div className="w-16 h-16 bg-slate-50 rounded-full flex items-center justify-center mx-auto mb-4">
+            <Target className="w-8 h-8 text-slate-400" />
+          </div>
+          <h3 className="text-lg font-bold text-slate-700 mb-2">ChÆ°a cÃ³ ngÃ¢n sÃ¡ch nÃ o</h3>
+          <p className="text-slate-500 mb-6 max-w-sm mx-auto text-sm">
+            Táº¡o ngÃ¢n sÃ¡ch giÃºp báº¡n kiá»ƒm soÃ¡t chi tiÃªu tá»‘t hÆ¡n. Báº¡n cÃ³ thá»ƒ táº¡o ngÃ¢n sÃ¡ch cho tá»«ng danh má»¥c hoáº·c ngÃ¢n sÃ¡ch tá»•ng.
+          </p>
+          <button
+            onClick={() => handleOpenModal()}
+            className="bg-indigo-50 text-indigo-600 px-6 py-2.5 rounded-xl font-bold hover:bg-indigo-100 transition-colors inline-block"
+          >
+            Táº¡o ngÃ¢n sÃ¡ch Ä‘áº§u tiÃªn
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {budgets.map((budget) => {
+            // Táº¡m thá»i mock giÃ¡ trá»‹ Ä‘Ã£ tiÃªu (spent). Sau nÃ y sáº½ láº¥y tá»« API thá»‘ng kÃª chi tiÃªu theo category trong thÃ¡ng
+            // Do chÆ°a cÃ³ API thá»‘ng kÃª chi tiáº¿t tá»«ng budget, mock 0
+            const spent = 0; 
+            const percent = Math.min((spent / budget.amount) * 100, 100);
+            
+            let colorClass = 'bg-emerald-500';
+            if (percent > 80) colorClass = 'bg-rose-500';
+            else if (percent > 50) colorClass = 'bg-amber-500';
+
+            const catName = budget.category_id ? budget.category_id.name : 'NgÃ¢n sÃ¡ch tá»•ng';
+            const catIcon = budget.category_id ? budget.category_id.icon : 'ðŸŒŽ';
+            const catColor = budget.category_id ? budget.category_id.color : '#6366f1';
+
+            return (
+              <div key={budget._id} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow group">
+                <div className="flex justify-between items-start mb-4">
+                  <div className="flex items-center gap-3">
+                    <div 
+                      className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl shadow-inner"
+                      style={{ backgroundColor: `${catColor}20`, color: catColor }}
+                    >
+                      {catIcon}
+                    </div>
+                    <div>
+                      <h3 className="font-bold text-slate-800 text-lg">{catName}</h3>
+                      <p className="text-xs text-slate-500 font-medium">{budget.month}</p>
+                    </div>
+                  </div>
+                  <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      onClick={() => handleOpenModal(budget)}
+                      className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                    >
+                      <Edit2 className="w-4 h-4" />
+                    </button>
+                    <button
+                      onClick={() => handleDelete(budget._id)}
+                      className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                    >
+                      <Trash2 className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mb-2 flex justify-between items-end">
+                  <div>
+                    <span className="text-sm font-bold text-slate-700">{formatCurrency(spent)}</span>
+                    <span className="text-xs text-slate-400 ml-1 font-medium">Ä‘Ã£ tiÃªu</span>
+                  </div>
+                  <div className="text-right">
+                    <span className="text-sm font-bold text-slate-400">{formatCurrency(budget.amount)}</span>
+                  </div>
+                </div>
+
+                <div className="w-full bg-slate-100 rounded-full h-2.5 mb-2 overflow-hidden">
+                  <div className={`${colorClass} h-2.5 rounded-full transition-all duration-1000`} style={{ width: `${percent}%` }}></div>
+                </div>
+
+                <p className="text-xs font-medium text-slate-500 text-right">
+                  CÃ²n láº¡i: <span className="font-bold text-slate-700">{formatCurrency(budget.amount - spent)}</span>
+                </p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
+      {/* Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 z-50">
+          <div className="bg-white w-full sm:w-full sm:max-w-md rounded-t-[2rem] sm:rounded-3xl p-6 shadow-2xl animate-in slide-in-from-bottom-8 sm:slide-in-from-bottom-4 duration-300">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-bold text-slate-800">
+                {editingId ? 'Sá»­a ngÃ¢n sÃ¡ch' : 'Táº¡o ngÃ¢n sÃ¡ch'}
+              </h3>
+              <button onClick={handleCloseModal} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-5">
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1.5">ThÃ¡ng Ã¡p dá»¥ng</label>
+                <input
+                  type="month"
+                  required
+                  value={formData.month}
+                  onChange={(e) => setFormData({ ...formData, month: e.target.value })}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-medium"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1.5">Danh má»¥c</label>
+                <select
+                  value={formData.category_id}
+                  onChange={(e) => setFormData({ ...formData, category_id: e.target.value })}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-medium appearance-none"
+                >
+                  <option value="">Táº¥t cáº£ danh má»¥c (NgÃ¢n sÃ¡ch tá»•ng)</option>
+                  {categories.map((c) => (
+                    <option key={c._id} value={c._id}>{c.icon} {c.name}</option>
+                  ))}
+                </select>
+              </div>
+              
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1.5">Sá»‘ tiá»n tá»‘i Ä‘a</label>
+                <input
+                  type="number"
+                  required
+                  min="0"
+                  value={formData.amount}
+                  onChange={(e) => setFormData({ ...formData, amount: e.target.value })}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-medium"
+                  placeholder="VD: 5000000"
+                />
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  className="w-full bg-indigo-600 text-white font-bold py-3.5 rounded-xl hover:bg-indigo-700 active:bg-indigo-800 transition-colors shadow-sm"
+                >
+                  LÆ°u láº¡i
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default Budgets;
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\frontend\src\pages\Categories.tsx ====
+import { useEffect, useState } from 'react';
+import { categoryApi } from '../api/services';
+import { Plus, Edit2, Trash2, X, Tags } from 'lucide-react';
+
+interface Category {
+  _id: string;
+  name: string;
+  type: 'income' | 'expense';
+  color: string;
+  icon: string;
+}
+
+const Categories = () => {
+  const [categories, setCategories] = useState<Category[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<'expense' | 'income'>('expense');
+  
+  const [formData, setFormData] = useState({
+    name: '',
+    type: 'expense',
+    color: '#3b82f6',
+    icon: 'ðŸ·ï¸'
+  });
+
+  const fetchCategories = async () => {
+    try {
+      const res = await categoryApi.getCategories();
+      setCategories(res.data || []);
+    } catch (error) {
+      console.error('Failed to fetch categories:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchCategories();
+  }, []);
+
+  const handleOpenModal = (category?: Category) => {
+    if (category) {
+      setEditingId(category._id);
+      setFormData({
+        name: category.name,
+        type: category.type,
+        color: category.color || '#3b82f6',
+        icon: category.icon || 'ðŸ·ï¸'
+      });
+    } else {
+      setEditingId(null);
+      setFormData({ name: '', type: activeTab, color: '#3b82f6', icon: 'ðŸ·ï¸' });
+    }
+    setIsModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setEditingId(null);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      if (editingId) {
+        await categoryApi.updateCategory(editingId, formData);
+      } else {
+        await categoryApi.createCategory(formData);
+      }
+      fetchCategories();
+      handleCloseModal();
+    } catch (error) {
+      console.error('Failed to save category:', error);
+      alert('CÃ³ lá»—i xáº£y ra khi lÆ°u danh má»¥c');
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (window.confirm('Báº¡n cÃ³ cháº¯c muá»‘n xÃ³a danh má»¥c nÃ y? KhÃ´ng thá»ƒ xÃ³a náº¿u Ä‘Ã£ cÃ³ giao dá»‹ch dÃ¹ng danh má»¥c nÃ y.')) {
+      try {
+        await categoryApi.deleteCategory(id);
+        fetchCategories();
+      } catch (error: any) {
+        console.error('Failed to delete category:', error);
+        alert(error.response?.data?.message || 'CÃ³ lá»—i xáº£y ra khi xÃ³a danh má»¥c');
+      }
+    }
+  };
+
+  const filteredCategories = categories.filter(c => c.type === activeTab);
+
+  if (loading) return <div className="flex justify-center items-center h-full text-slate-500">Äang táº£i dá»¯ liá»‡u...</div>;
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-500">
+      <div className="flex justify-between items-center">
+        <h2 className="text-xl md:text-2xl font-bold text-slate-800">Danh má»¥c</h2>
+        <button
+          onClick={() => handleOpenModal()}
+          className="flex items-center gap-2 bg-indigo-600 text-white px-3 md:px-4 py-2 rounded-xl hover:bg-indigo-700 transition-colors shadow-sm font-medium text-sm md:text-base"
+        >
+          <Plus className="w-5 h-5" />
+          <span className="hidden sm:inline">ThÃªm má»›i</span>
+          <span className="sm:hidden">ThÃªm</span>
+        </button>
+      </div>
+
+      <div className="flex bg-slate-100 p-1 rounded-xl max-w-sm">
+        <button
+          onClick={() => setActiveTab('expense')}
+          className={`flex-1 py-2 text-sm font-bold rounded-lg transition-colors ${
+            activeTab === 'expense' ? 'bg-white text-rose-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          Chi tiÃªu
+        </button>
+        <button
+          onClick={() => setActiveTab('income')}
+          className={`flex-1 py-2 text-sm font-bold rounded-lg transition-colors ${
+            activeTab === 'income' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-slate-700'
+          }`}
+        >
+          Thu nháº­p
+        </button>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-4">
+        {filteredCategories.map((category) => (
+          <div key={category._id} className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow group flex flex-col items-center text-center">
+            <div 
+              className="w-12 h-12 rounded-full flex items-center justify-center text-2xl mb-3 shadow-inner"
+              style={{ backgroundColor: `${category.color}20`, color: category.color }}
+            >
+              {category.icon}
+            </div>
+            <h3 className="font-bold text-slate-700 text-sm mb-3 line-clamp-1">{category.name}</h3>
+            
+            <div className="flex gap-2 mt-auto">
+              <button
+                onClick={() => handleOpenModal(category)}
+                className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+              >
+                <Edit2 className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => handleDelete(category._id)}
+                className="p-1.5 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 z-50">
+          <div className="bg-white w-full sm:w-full sm:max-w-md rounded-t-[2rem] sm:rounded-3xl p-6 shadow-2xl animate-in slide-in-from-bottom-8 sm:slide-in-from-bottom-4 duration-300">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-bold text-slate-800">
+                {editingId ? 'Sá»­a danh má»¥c' : 'ThÃªm danh má»¥c má»›i'}
+              </h3>
+              <button onClick={handleCloseModal} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-5">
+              <div className="flex bg-slate-100 p-1 rounded-xl">
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, type: 'expense' })}
+                  className={`flex-1 py-2.5 text-sm font-bold rounded-lg transition-colors ${
+                    formData.type === 'expense' ? 'bg-white text-rose-600 shadow-sm' : 'text-slate-500'
+                  }`}
+                >
+                  Chi tiÃªu
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setFormData({ ...formData, type: 'income' })}
+                  className={`flex-1 py-2.5 text-sm font-bold rounded-lg transition-colors ${
+                    formData.type === 'income' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500'
+                  }`}
+                >
+                  Thu nháº­p
+                </button>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1.5">TÃªn danh má»¥c</label>
+                <input
+                  type="text"
+                  required
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-medium"
+                  placeholder="VD: Tiá»n nhÃ , LÆ°Æ¡ng..."
+                />
+              </div>
+              
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1.5">Icon (Emoji)</label>
+                  <input
+                    type="text"
+                    required
+                    value={formData.icon}
+                    onChange={(e) => setFormData({ ...formData, icon: e.target.value })}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-medium text-xl text-center"
+                    placeholder="ðŸ”"
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1.5">MÃ u sáº¯c</label>
+                  <input
+                    type="color"
+                    required
+                    value={formData.color}
+                    onChange={(e) => setFormData({ ...formData, color: e.target.value })}
+                    className="w-full h-[52px] px-2 py-2 bg-slate-50 border border-slate-200 rounded-xl cursor-pointer"
+                  />
+                </div>
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  className="w-full bg-indigo-600 text-white font-bold py-3.5 rounded-xl hover:bg-indigo-700 active:bg-indigo-800 transition-colors shadow-sm"
+                >
+                  LÆ°u láº¡i
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default Categories;
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\frontend\src\pages\Dashboard.tsx ====
+import { useEffect, useState } from 'react';
+import axios from '../api/axios';
+import { Wallet, ArrowUpCircle, ArrowDownCircle, Target } from 'lucide-react';
+import { PieChart, Pie, Cell, ResponsiveContainer, Tooltip, Legend } from 'recharts';
+
+interface DashboardStats {
+  income: number;
+  expense: number;
+  balance: number;
+  wallets: { _id: string, name: string, balance: number, isDefault: boolean }[];
+}
+
+const Dashboard = () => {
+  const [stats, setStats] = useState<DashboardStats | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const currentDate = new Date();
+  const currentMonthStr = `${currentDate.getFullYear()}-${String(currentDate.getMonth() + 1).padStart(2, '0')}`;
+  const [selectedMonth, setSelectedMonth] = useState(currentMonthStr);
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const res = await axios.get('/transactions/dashboard', { params: { month: selectedMonth } });
+        setStats(res.data || null);
+      } catch (error) {
+        console.error('Failed to fetch stats:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+    fetchStats();
+  }, [selectedMonth]);
+
+  if (loading || !stats) return <div className="flex justify-center items-center h-full text-slate-500">Äang táº£i dá»¯ liá»‡u...</div>;
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(amount);
+  };
+
+  const pieData = [
+    { name: 'Thu nháº­p', value: stats?.income || 0, color: '#10b981' },
+    { name: 'Chi tiÃªu', value: stats?.expense || 0, color: '#ef4444' }
+  ];
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-500">
+      <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
+        <h2 className="text-xl md:text-2xl font-bold text-slate-800">Tá»•ng quan tÃ i chÃ­nh</h2>
+        <div className="bg-white p-1 rounded-xl shadow-sm border border-slate-100 flex inline-flex items-center w-max">
+          <input
+            type="month"
+            value={selectedMonth}
+            onChange={(e) => setSelectedMonth(e.target.value)}
+            className="px-4 py-2 bg-transparent outline-none text-slate-700 font-bold"
+          />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div className="bg-gradient-to-br from-indigo-500 to-indigo-600 p-6 rounded-3xl shadow-lg text-white">
+          <p className="text-indigo-100 text-sm font-medium mb-1">Tá»•ng sá»‘ dÆ°</p>
+          <p className="text-3xl font-bold text-white">
+            {formatCurrency(stats?.balance || 0)}
+          </p>
+        </div>
+        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex items-center gap-4">
+          <div className="p-3 rounded-2xl bg-emerald-50 text-emerald-600"><ArrowUpCircle size={24} /></div>
+          <div>
+            <p className="text-sm font-medium text-slate-500">Tá»•ng thu</p>
+            <p className="text-xl font-bold text-slate-800">+{formatCurrency(stats?.income || 0)}</p>
+          </div>
+        </div>
+        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 flex items-center gap-4">
+          <div className="p-3 rounded-2xl bg-rose-50 text-rose-600"><ArrowDownCircle size={24} /></div>
+          <div>
+            <p className="text-sm font-medium text-slate-500">Tá»•ng chi</p>
+            <p className="text-xl font-bold text-slate-800">-{formatCurrency(stats?.expense || 0)}</p>
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+          <h3 className="font-bold text-slate-700 mb-6 flex items-center gap-2">
+            <Target className="w-5 h-5 text-indigo-500" />
+            Tá»· lá»‡ Thu / Chi ({selectedMonth})
+          </h3>
+          <div className="h-80">
+            <ResponsiveContainer width="100%" height="100%">
+              <PieChart>
+                <Pie
+                  data={pieData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={80}
+                  outerRadius={110}
+                  paddingAngle={5}
+                  dataKey="value"
+                  stroke="none"
+                >
+                  {pieData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} />
+                  ))}
+                </Pie>
+                <Tooltip 
+                  formatter={(value: number) => formatCurrency(value)}
+                  contentStyle={{ borderRadius: '1rem', border: 'none', boxShadow: '0 10px 15px -3px rgb(0 0 0 / 0.1)' }}
+                />
+                <Legend iconType="circle" />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100">
+          <h3 className="font-bold text-slate-700 mb-6 flex items-center gap-2">
+            <Wallet className="w-5 h-5 text-indigo-500" />
+            Danh sÃ¡ch VÃ­
+          </h3>
+          <div className="space-y-4">
+            {stats.wallets.map(wallet => (
+              <div key={wallet._id} className="flex justify-between items-center p-4 bg-slate-50 rounded-2xl border border-slate-100 hover:bg-slate-100 transition-colors cursor-pointer">
+                <div className="flex items-center gap-3">
+                  <div className="w-10 h-10 rounded-full bg-indigo-100 text-indigo-600 flex items-center justify-center">
+                    <Wallet className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-700 text-sm">{wallet.name}</h4>
+                    {wallet.isDefault && <span className="text-[10px] bg-indigo-500 text-white px-2 py-0.5 rounded-full uppercase font-bold tracking-wider">Máº·c Ä‘á»‹nh</span>}
+                  </div>
+                </div>
+                <div className={`font-black ${wallet.balance >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                  {formatCurrency(wallet.balance)}
+                </div>
+              </div>
+            ))}
+            {stats.wallets.length === 0 && (
+              <p className="text-center text-slate-400 text-sm py-4">ChÆ°a cÃ³ vÃ­ nÃ o</p>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default Dashboard;
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\frontend\src\pages\Login.tsx ====
+import { useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import axios from '../api/axios';
+import { useAuthStore } from '../store/useAuthStore';
+
+const Login = () => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
+  const login = useAuthStore((state) => state.login);
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+    setLoading(true);
+
+    try {
+      const response: any = await axios.post('/auth/login', { email, password });
+      login(response.data.user, response.data.token);
+      navigate('/dashboard');
+    } catch (err: any) {
+      setError(err.message || 'ÄÄƒng nháº­p tháº¥t báº¡i');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 py-12 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-md w-full space-y-8 bg-white p-6 sm:p-10 rounded-3xl shadow-xl">
+        <div>
+          <h2 className="mt-6 text-center text-3xl font-extrabold text-slate-900">
+            ÄÄƒng nháº­p
+          </h2>
+          <p className="mt-2 text-center text-sm text-slate-600">
+            Hoáº·c{' '}
+            <Link to="/register" className="font-medium text-indigo-600 hover:text-indigo-500 transition-colors">
+              Ä‘Äƒng kÃ½ tÃ i khoáº£n má»›i
+            </Link>
+          </p>
+        </div>
+        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+          {error && (
+            <div className="bg-red-50 text-red-500 p-3 rounded-lg text-sm text-center border border-red-100">
+              {error}
+            </div>
+          )}
+          <div className="rounded-md shadow-sm space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
+              <input
+                type="email"
+                required
+                className="appearance-none relative block w-full px-3 py-2 border border-slate-300 placeholder-slate-400 text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm transition-shadow"
+                placeholder="Nháº­p email cá»§a báº¡n"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Máº­t kháº©u</label>
+              <input
+                type="password"
+                required
+                className="appearance-none relative block w-full px-3 py-2 border border-slate-300 placeholder-slate-400 text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm transition-shadow"
+                placeholder="Nháº­p máº­t kháº©u"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div>
+            <button
+              type="submit"
+              disabled={loading}
+              className="group relative w-full flex justify-center py-2.5 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 transition-colors shadow-md hover:shadow-lg"
+            >
+              {loading ? 'Äang xá»­ lÃ½...' : 'ÄÄƒng nháº­p'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+export default Login;
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\frontend\src\pages\Register.tsx ====
+import { useState } from 'react';
+import { useNavigate, Link } from 'react-router-dom';
+import axios from '../api/axios';
+
+const Register = () => {
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
+  const navigate = useNavigate();
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError('');
+
+    if (password !== confirmPassword) {
+      setError('Máº­t kháº©u xÃ¡c nháº­n khÃ´ng khá»›p');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      await axios.post('/auth/register', { email, password });
+      navigate('/login');
+    } catch (err: any) {
+      setError(err.message || 'ÄÄƒng kÃ½ tháº¥t báº¡i');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 py-12 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-md w-full space-y-8 bg-white p-6 sm:p-10 rounded-3xl shadow-xl">
+        <div>
+          <h2 className="mt-6 text-center text-3xl font-extrabold text-slate-900">
+            ÄÄƒng kÃ½ tÃ i khoáº£n
+          </h2>
+          <p className="mt-2 text-center text-sm text-slate-600">
+            ÄÃ£ cÃ³ tÃ i khoáº£n?{' '}
+            <Link to="/login" className="font-medium text-indigo-600 hover:text-indigo-500 transition-colors">
+              ÄÄƒng nháº­p ngay
+            </Link>
+          </p>
+        </div>
+        <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
+          {error && (
+            <div className="bg-red-50 text-red-500 p-3 rounded-lg text-sm text-center border border-red-100">
+              {error}
+            </div>
+          )}
+          <div className="rounded-md shadow-sm space-y-4">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
+              <input
+                type="email"
+                required
+                className="appearance-none relative block w-full px-3 py-2 border border-slate-300 placeholder-slate-400 text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm transition-shadow"
+                placeholder="Nháº­p email cá»§a báº¡n"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Máº­t kháº©u</label>
+              <input
+                type="password"
+                required
+                className="appearance-none relative block w-full px-3 py-2 border border-slate-300 placeholder-slate-400 text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm transition-shadow"
+                placeholder="Nháº­p máº­t kháº©u"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">XÃ¡c nháº­n máº­t kháº©u</label>
+              <input
+                type="password"
+                required
+                className="appearance-none relative block w-full px-3 py-2 border border-slate-300 placeholder-slate-400 text-slate-900 rounded-lg focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 sm:text-sm transition-shadow"
+                placeholder="Nháº­p láº¡i máº­t kháº©u"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+              />
+            </div>
+          </div>
+
+          <div>
+            <button
+              type="submit"
+              disabled={loading}
+              className="group relative w-full flex justify-center py-2.5 px-4 border border-transparent text-sm font-medium rounded-lg text-white bg-indigo-600 hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-indigo-500 disabled:opacity-50 transition-colors shadow-md hover:shadow-lg"
+            >
+              {loading ? 'Äang xá»­ lÃ½...' : 'ÄÄƒng kÃ½'}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+export default Register;
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\frontend\src\pages\Transactions.tsx ====
+import { useEffect, useState } from 'react';
+import axios from '../api/axios';
+import { walletApi, categoryApi } from '../api/services';
+import { Plus, Edit2, Trash2, X, TrendingUp, TrendingDown, Wallet } from 'lucide-react';
+
+interface WalletType {
+  _id: string;
+  name: string;
+}
+
+interface CategoryType {
+  _id: string;
+  name: string;
+  type: 'income' | 'expense';
+  color: string;
+  icon: string;
+}
+
+interface Transaction {
+  _id: string;
+  wallet_id: WalletType;
+  category_id?: CategoryType;
+  type: 'income' | 'expense';
+  amount: number;
+  date: string;
+  category: string; // TÃªn fallback
+  note?: string;
+}
+
+const Transactions = () => {
+  const [transactions, setTransactions] = useState<Transaction[]>([]);
+  const [wallets, setWallets] = useState<WalletType[]>([]);
+  const [categories, setCategories] = useState<CategoryType[]>([]);
+  
+  const [loading, setLoading] = useState(true);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  
+  // States cho filter
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterType, setFilterType] = useState('all');
+  const [minAmount, setMinAmount] = useState('');
+  const [maxAmount, setMaxAmount] = useState('');
+  const [showFilters, setShowFilters] = useState(false);
+  
+  const [formData, setFormData] = useState({
+    wallet_id: '',
+    type: 'expense',
+    amount: '',
+    date: new Date().toISOString().split('T')[0],
+    category_id: '',
+    note: ''
+  });
+
+  const fetchData = async () => {
+    try {
+      const [txRes, walletRes, catRes] = await Promise.all([
+        axios.get('/transactions'),
+        walletApi.getWallets(),
+        categoryApi.getCategories()
+      ]);
+      setTransactions(txRes.data || []);
+      setWallets(walletRes.data || []);
+      setCategories(catRes.data || []);
+    } catch (error) {
+      console.error('Failed to fetch data', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const handleOpenModal = (transaction?: Transaction) => {
+    if (transaction) {
+      setEditingId(transaction._id);
+      setFormData({
+        wallet_id: transaction.wallet_id._id,
+        type: transaction.type,
+        amount: transaction.amount.toString(),
+        date: new Date(transaction.date).toISOString().split('T')[0],
+        category_id: transaction.category_id ? transaction.category_id._id : '',
+        note: transaction.note || ''
+      });
+    } else {
+      setEditingId(null);
+      const defaultWallet = wallets.find((w: any) => w.isDefault) || wallets[0];
+      const defaultCat = categories.find(c => c.type === 'expense');
+      setFormData({
+        wallet_id: defaultWallet ? defaultWallet._id : '',
+        type: 'expense',
+        amount: '',
+        date: new Date().toISOString().split('T')[0],
+        category_id: defaultCat ? defaultCat._id : '',
+        note: ''
+      });
+    }
+    setIsModalOpen(true);
+  };
+
+  const handleTypeChange = (newType: 'income' | 'expense') => {
+    const defaultCat = categories.find(c => c.type === newType);
+    setFormData({
+      ...formData,
+      type: newType,
+      category_id: defaultCat ? defaultCat._id : ''
+    });
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const selectedCat = categories.find(c => c._id === formData.category_id);
+      
+      const payload = {
+        ...formData,
+        amount: Number(formData.amount),
+        category: selectedCat ? selectedCat.name : '' // fallback
+      };
+
+      if (editingId) {
+        await axios.put(`/transactions/${editingId}`, payload);
+      } else {
+        await axios.post('/transactions', payload);
+      }
+      setIsModalOpen(false);
+      fetchData();
+    } catch (error) {
+      console.error('Failed to save transaction', error);
+      alert('CÃ³ lá»—i xáº£y ra khi lÆ°u giao dá»‹ch');
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (window.confirm('Báº¡n cÃ³ cháº¯c cháº¯n muá»‘n xÃ³a giao dá»‹ch nÃ y?')) {
+      try {
+        await axios.delete(`/transactions/${id}`);
+        fetchData();
+      } catch (error) {
+        console.error('Failed to delete transaction', error);
+        alert('CÃ³ lá»—i xáº£y ra khi xÃ³a giao dá»‹ch');
+      }
+    }
+  };
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(amount);
+  };
+
+  const filteredTransactions = transactions.filter(tx => {
+    if (filterType !== 'all' && tx.type !== filterType) return false;
+    if (searchTerm) {
+      const term = searchTerm.toLowerCase();
+      const catName = tx.category_id ? tx.category_id.name.toLowerCase() : tx.category.toLowerCase();
+      const walletName = tx.wallet_id ? tx.wallet_id.name.toLowerCase() : '';
+      const matchNote = tx.note?.toLowerCase().includes(term) || false;
+      if (!catName.includes(term) && !walletName.includes(term) && !matchNote) return false;
+    }
+    if (minAmount && tx.amount < Number(minAmount)) return false;
+    if (maxAmount && tx.amount > Number(maxAmount)) return false;
+    return true;
+  });
+
+  const activeCategories = categories.filter(c => c.type === formData.type);
+
+  if (loading) return <div className="flex justify-center items-center h-full text-slate-500">Äang táº£i dá»¯ liá»‡u...</div>;
+
+  return (
+    <div className="space-y-4 md:space-y-6 animate-in fade-in duration-500">
+      <div className="flex justify-between items-center">
+        <h2 className="text-xl md:text-2xl font-bold text-slate-800">Giao dá»‹ch</h2>
+        <div className="flex gap-2">
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className="flex items-center gap-2 bg-slate-100 text-slate-600 px-3 md:px-4 py-2 rounded-xl hover:bg-slate-200 transition-colors shadow-sm font-medium text-sm md:text-base"
+          >
+            <span className="hidden sm:inline">Bá»™ lá»c</span>
+            <span className="sm:hidden">Lá»c</span>
+          </button>
+          <button
+            onClick={() => handleOpenModal()}
+            className="flex items-center gap-2 bg-indigo-600 text-white px-3 md:px-4 py-2 rounded-xl hover:bg-indigo-700 transition-colors shadow-sm font-medium text-sm md:text-base"
+          >
+            <Plus className="w-5 h-5" />
+            <span className="hidden sm:inline">ThÃªm giao dá»‹ch</span>
+            <span className="sm:hidden">ThÃªm</span>
+          </button>
+        </div>
+      </div>
+
+      {showFilters && (
+        <div className="bg-white p-4 rounded-2xl shadow-sm border border-slate-100 animate-in fade-in slide-in-from-top-4 duration-200">
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
+            <div>
+              <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">TÃ¬m kiáº¿m</label>
+              <input
+                type="text"
+                placeholder="Ghi chÃº, vÃ­, danh má»¥c..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Loáº¡i</label>
+              <select
+                value={filterType}
+                onChange={(e) => setFilterType(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm appearance-none"
+              >
+                <option value="all">Táº¥t cáº£</option>
+                <option value="income">Thu nháº­p</option>
+                <option value="expense">Chi tiÃªu</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Tá»« sá»‘ tiá»n</label>
+              <input
+                type="number"
+                placeholder="0 Ä‘"
+                value={minAmount}
+                onChange={(e) => setMinAmount(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+              />
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-slate-500 mb-1 uppercase tracking-wider">Äáº¿n sá»‘ tiá»n</label>
+              <input
+                type="number"
+                placeholder="VÃ´ háº¡n"
+                value={maxAmount}
+                onChange={(e) => setMaxAmount(e.target.value)}
+                className="w-full px-3 py-2 bg-slate-50 border border-slate-200 rounded-lg focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none text-sm"
+              />
+            </div>
+          </div>
+          {(searchTerm || filterType !== 'all' || minAmount || maxAmount) && (
+            <div className="mt-3 flex justify-end">
+              <button 
+                onClick={() => {
+                  setSearchTerm('');
+                  setFilterType('all');
+                  setMinAmount('');
+                  setMaxAmount('');
+                }}
+                className="text-xs font-semibold text-rose-500 hover:text-rose-600 px-3 py-1.5 bg-rose-50 hover:bg-rose-100 rounded-lg transition-colors"
+              >
+                XÃ³a bá»™ lá»c
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+        
+        {/* Mobile Cards View */}
+        <div className="md:hidden divide-y divide-slate-100">
+          {filteredTransactions.length === 0 ? (
+            <div className="p-8 text-center text-slate-400 text-sm">KhÃ´ng tÃ¬m tháº¥y giao dá»‹ch nÃ o</div>
+          ) : (
+            filteredTransactions.map((tx) => (
+              <div key={tx._id} className="p-4 hover:bg-slate-50 transition-colors flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div 
+                    className="w-12 h-12 rounded-2xl flex items-center justify-center text-2xl flex-shrink-0"
+                    style={{ 
+                      backgroundColor: tx.category_id ? `${tx.category_id.color}20` : '#f1f5f9',
+                      color: tx.category_id ? tx.category_id.color : '#64748b' 
+                    }}
+                  >
+                    {tx.category_id ? tx.category_id.icon : (tx.type === 'income' ? <TrendingUp size={20} /> : <TrendingDown size={20} />)}
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-800 text-sm">{tx.category_id ? tx.category_id.name : tx.category}</h4>
+                    <p className="text-xs text-slate-500 mt-0.5 line-clamp-1">
+                      <span className="font-semibold text-slate-600">{tx.wallet_id?.name}</span> â€¢ {tx.note || new Date(tx.date).toLocaleDateString('vi-VN')}
+                    </p>
+                  </div>
+                </div>
+                <div className="text-right flex flex-col items-end gap-2">
+                  <span className={`font-bold text-sm ${tx.type === 'income' ? 'text-emerald-600' : 'text-rose-600'}`}>
+                    {tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}
+                  </span>
+                  <div className="flex items-center gap-3">
+                    <button onClick={() => handleOpenModal(tx)} className="text-slate-400 hover:text-indigo-600 transition-colors p-1">
+                      <Edit2 size={14} />
+                    </button>
+                    <button onClick={() => handleDelete(tx._id)} className="text-slate-400 hover:text-rose-600 transition-colors p-1">
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))
+          )}
+        </div>
+
+        {/* Desktop Table View */}
+        <div className="hidden md:block overflow-x-auto">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-slate-50 border-b border-slate-100 text-slate-500 text-sm uppercase tracking-wider">
+                <th className="p-4 font-semibold">NgÃ y</th>
+                <th className="p-4 font-semibold">VÃ­</th>
+                <th className="p-4 font-semibold">Danh má»¥c</th>
+                <th className="p-4 font-semibold">Ghi chÃº</th>
+                <th className="p-4 font-semibold text-right">Sá»‘ tiá»n</th>
+                <th className="p-4 font-semibold text-center">Thao tÃ¡c</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100">
+              {filteredTransactions.length === 0 ? (
+                <tr>
+                  <td colSpan={6} className="p-10 text-center text-slate-500">
+                    KhÃ´ng tÃ¬m tháº¥y giao dá»‹ch nÃ o phÃ¹ há»£p vá»›i bá»™ lá»c
+                  </td>
+                </tr>
+              ) : (
+                filteredTransactions.map((tx) => (
+                  <tr key={tx._id} className="hover:bg-slate-50 transition-colors group">
+                    <td className="p-4 text-slate-600 text-sm font-medium">
+                      {new Date(tx.date).toLocaleDateString('vi-VN')}
+                    </td>
+                    <td className="p-4">
+                      <div className="flex items-center gap-2">
+                        <Wallet className="w-4 h-4 text-slate-400" />
+                        <span className="text-slate-700 font-medium">{tx.wallet_id?.name}</span>
+                      </div>
+                    </td>
+                    <td className="p-4">
+                      <div className="flex items-center gap-2">
+                        {tx.category_id && (
+                          <span 
+                            className="w-6 h-6 rounded flex items-center justify-center text-sm"
+                            style={{ backgroundColor: `${tx.category_id.color}20` }}
+                          >
+                            {tx.category_id.icon}
+                          </span>
+                        )}
+                        <span className="text-slate-800 font-bold">{tx.category_id ? tx.category_id.name : tx.category}</span>
+                      </div>
+                    </td>
+                    <td className="p-4 text-slate-500 text-sm max-w-[200px] truncate" title={tx.note}>{tx.note}</td>
+                    <td className={`p-4 text-right font-bold tracking-tight ${
+                      tx.type === 'income' ? 'text-emerald-600' : 'text-rose-600'
+                    }`}>
+                      {tx.type === 'income' ? '+' : '-'}{formatCurrency(tx.amount)}
+                    </td>
+                    <td className="p-4">
+                      <div className="flex justify-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={() => handleOpenModal(tx)}
+                          className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
+                          title="Sá»­a"
+                        >
+                          <Edit2 className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDelete(tx._id)}
+                          className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-lg transition-colors"
+                          title="XÃ³a"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* Modal */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-[100] flex items-end md:items-center justify-center bg-slate-900/40 backdrop-blur-sm sm:p-4 animate-in fade-in duration-200">
+          <div className="bg-white w-full sm:rounded-3xl shadow-2xl max-w-md overflow-hidden rounded-t-3xl animate-in slide-in-from-bottom-full md:slide-in-from-bottom-10 duration-300">
+            <div className="flex justify-between items-center p-5 md:p-6 border-b border-slate-100">
+              <h3 className="text-xl font-bold text-slate-800">
+                {editingId ? 'Sá»­a giao dá»‹ch' : 'ThÃªm giao dá»‹ch má»›i'}
+              </h3>
+              <button 
+                onClick={handleCloseModal}
+                className="p-2 text-slate-400 hover:text-slate-700 bg-slate-50 hover:bg-slate-100 rounded-full transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+            
+            <form onSubmit={handleSubmit} className="p-5 md:p-6 space-y-5">
+              <div className="flex bg-slate-100 p-1 rounded-xl">
+                <label className="flex-1 cursor-pointer">
+                  <input 
+                    type="radio" 
+                    name="type" 
+                    value="expense"
+                    checked={formData.type === 'expense'}
+                    onChange={() => handleTypeChange('expense')}
+                    className="peer sr-only"
+                  />
+                  <div className="text-center py-2.5 rounded-lg text-sm font-bold text-slate-500 peer-checked:bg-white peer-checked:text-rose-600 peer-checked:shadow-sm transition-all">
+                    Chi tiÃªu
+                  </div>
+                </label>
+                <label className="flex-1 cursor-pointer">
+                  <input 
+                    type="radio" 
+                    name="type" 
+                    value="income"
+                    checked={formData.type === 'income'}
+                    onChange={() => handleTypeChange('income')}
+                    className="peer sr-only"
+                  />
+                  <div className="text-center py-2.5 rounded-lg text-sm font-bold text-slate-500 peer-checked:bg-white peer-checked:text-emerald-600 peer-checked:shadow-sm transition-all">
+                    Thu nháº­p
+                  </div>
+                </label>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1.5">Sá»‘ tiá»n (VNÄ)</label>
+                <div className="relative">
+                  <span className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400 font-medium">â‚«</span>
+                  <input
+                    type="number"
+                    required
+                    min="0"
+                    value={formData.amount}
+                    onChange={(e) => setFormData({...formData, amount: e.target.value})}
+                    className="w-full pl-8 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all font-semibold"
+                    placeholder="50000"
+                  />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1.5">NgÃ y</label>
+                  <input
+                    type="date"
+                    required
+                    value={formData.date}
+                    onChange={(e) => setFormData({...formData, date: e.target.value})}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-sm font-medium text-slate-700"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-bold text-slate-700 mb-1.5">VÃ­ nguá»“n</label>
+                  <select
+                    required
+                    value={formData.wallet_id}
+                    onChange={(e) => setFormData({...formData, wallet_id: e.target.value})}
+                    className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-sm font-medium text-slate-700 appearance-none"
+                  >
+                    {wallets.map(w => (
+                      <option key={w._id} value={w._id}>{w.name}</option>
+                    ))}
+                  </select>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1.5">Danh má»¥c</label>
+                <div className="grid grid-cols-3 sm:grid-cols-4 gap-2 max-h-32 overflow-y-auto p-1">
+                  {activeCategories.map(cat => (
+                    <div 
+                      key={cat._id}
+                      onClick={() => setFormData({...formData, category_id: cat._id})}
+                      className={`cursor-pointer border rounded-xl p-2 flex flex-col items-center gap-1 transition-all ${
+                        formData.category_id === cat._id 
+                          ? 'border-indigo-500 bg-indigo-50 shadow-sm' 
+                          : 'border-slate-100 hover:border-slate-300'
+                      }`}
+                    >
+                      <span className="text-xl">{cat.icon}</span>
+                      <span className="text-[10px] font-bold text-slate-600 text-center line-clamp-1">{cat.name}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1.5">Ghi chÃº</label>
+                <input
+                  type="text"
+                  value={formData.note}
+                  onChange={(e) => setFormData({...formData, note: e.target.value})}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all text-sm"
+                  placeholder="Nháº­p ghi chÃº tÃ¹y chá»n..."
+                />
+              </div>
+
+              <div className="pt-2 flex gap-3 pb-safe">
+                <button
+                  type="submit"
+                  className="w-full px-4 py-3.5 text-white bg-indigo-600 hover:bg-indigo-700 rounded-xl font-bold transition-all shadow-md hover:shadow-lg active:scale-[0.98]"
+                >
+                  {editingId ? 'Cáº­p nháº­t' : 'LÆ°u giao dá»‹ch'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default Transactions;
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\frontend\src\pages\Wallets.tsx ====
+import { useEffect, useState } from 'react';
+import { walletApi } from '../api/services';
+import { Plus, Edit2, Trash2, X, Wallet as WalletIcon } from 'lucide-react';
+
+interface Wallet {
+  _id: string;
+  name: string;
+  balance: number;
+  isDefault: boolean;
+}
+
+const Wallets = () => {
+  const [wallets, setWallets] = useState<Wallet[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [isModalOpen, setIsModalOpen] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  
+  const [formData, setFormData] = useState({
+    name: '',
+    balance: '',
+    isDefault: false
+  });
+
+  const fetchWallets = async () => {
+    try {
+      const res = await walletApi.getWallets();
+      setWallets(res.data || []);
+    } catch (error) {
+      console.error('Failed to fetch wallets:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchWallets();
+  }, []);
+
+  const handleOpenModal = (wallet?: Wallet) => {
+    if (wallet) {
+      setEditingId(wallet._id);
+      setFormData({
+        name: wallet.name,
+        balance: wallet.balance.toString(),
+        isDefault: wallet.isDefault
+      });
+    } else {
+      setEditingId(null);
+      setFormData({ name: '', balance: '0', isDefault: false });
+    }
+    setIsModalOpen(true);
+  };
+
+  const handleCloseModal = () => {
+    setIsModalOpen(false);
+    setEditingId(null);
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    try {
+      const payload = {
+        name: formData.name,
+        balance: Number(formData.balance),
+        isDefault: formData.isDefault
+      };
+
+      if (editingId) {
+        await walletApi.updateWallet(editingId, payload);
+      } else {
+        await walletApi.createWallet(payload);
+      }
+      fetchWallets();
+      handleCloseModal();
+    } catch (error) {
+      console.error('Failed to save wallet:', error);
+      alert('CÃ³ lá»—i xáº£y ra khi lÆ°u vÃ­');
+    }
+  };
+
+  const handleDelete = async (id: string) => {
+    if (window.confirm('Báº¡n cÃ³ cháº¯c muá»‘n xÃ³a vÃ­ nÃ y? LÆ°u Ã½: KhÃ´ng thá»ƒ xÃ³a vÃ­ Ä‘ang chá»©a giao dá»‹ch.')) {
+      try {
+        await walletApi.deleteWallet(id);
+        fetchWallets();
+      } catch (error: any) {
+        console.error('Failed to delete wallet:', error);
+        alert(error.response?.data?.message || 'CÃ³ lá»—i xáº£y ra khi xÃ³a vÃ­');
+      }
+    }
+  };
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(amount);
+  };
+
+  if (loading) return <div className="flex justify-center items-center h-full text-slate-500">Äang táº£i dá»¯ liá»‡u...</div>;
+
+  return (
+    <div className="space-y-6 animate-in fade-in duration-500">
+      <div className="flex justify-between items-center">
+        <h2 className="text-xl md:text-2xl font-bold text-slate-800">VÃ­ cá»§a tÃ´i</h2>
+        <button
+          onClick={() => handleOpenModal()}
+          className="flex items-center gap-2 bg-indigo-600 text-white px-3 md:px-4 py-2 rounded-xl hover:bg-indigo-700 transition-colors shadow-sm font-medium text-sm md:text-base"
+        >
+          <Plus className="w-5 h-5" />
+          <span className="hidden sm:inline">ThÃªm vÃ­ má»›i</span>
+          <span className="sm:hidden">ThÃªm</span>
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {wallets.map((wallet) => (
+          <div key={wallet._id} className="bg-white p-6 rounded-3xl shadow-sm border border-slate-100 hover:shadow-md transition-shadow relative overflow-hidden group">
+            {wallet.isDefault && (
+              <div className="absolute top-0 right-0 bg-indigo-500 text-white text-[10px] font-bold px-3 py-1 rounded-bl-xl tracking-wider uppercase">
+                Máº·c Ä‘á»‹nh
+              </div>
+            )}
+            <div className="flex items-center justify-between mb-4 mt-2">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-indigo-50 text-indigo-600 rounded-2xl">
+                  <WalletIcon className="w-6 h-6" />
+                </div>
+                <h3 className="font-bold text-slate-800 text-lg">{wallet.name}</h3>
+              </div>
+            </div>
+            
+            <div className="mb-6">
+              <p className="text-sm text-slate-500 mb-1 font-medium">Sá»‘ dÆ° hiá»‡n táº¡i</p>
+              <p className={`text-2xl font-black ${wallet.balance >= 0 ? 'text-emerald-600' : 'text-rose-600'}`}>
+                {formatCurrency(wallet.balance)}
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2 border-t border-slate-50 pt-4">
+              <button
+                onClick={() => handleOpenModal(wallet)}
+                className="p-2 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-colors"
+                title="Sá»­a"
+              >
+                <Edit2 className="w-4 h-4" />
+              </button>
+              <button
+                onClick={() => handleDelete(wallet._id)}
+                className="p-2 text-slate-400 hover:text-rose-600 hover:bg-rose-50 rounded-xl transition-colors"
+                title="XÃ³a"
+              >
+                <Trash2 className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      {/* Modal form */}
+      {isModalOpen && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-sm flex items-end sm:items-center justify-center p-0 sm:p-4 z-50">
+          <div className="bg-white w-full sm:w-full sm:max-w-md rounded-t-[2rem] sm:rounded-3xl p-6 shadow-2xl animate-in slide-in-from-bottom-8 sm:slide-in-from-bottom-4 duration-300">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-xl font-bold text-slate-800">
+                {editingId ? 'Sá»­a vÃ­' : 'ThÃªm vÃ­ má»›i'}
+              </h3>
+              <button onClick={handleCloseModal} className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-full transition-colors">
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form onSubmit={handleSubmit} className="space-y-5">
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1.5">TÃªn vÃ­</label>
+                <input
+                  type="text"
+                  required
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-medium"
+                  placeholder="VD: Tiá»n máº·t, Tháº» tÃ­n dá»¥ng..."
+                />
+              </div>
+              
+              <div>
+                <label className="block text-sm font-bold text-slate-700 mb-1.5">Sá»‘ dÆ° ban Ä‘áº§u</label>
+                <input
+                  type="number"
+                  required
+                  value={formData.balance}
+                  onChange={(e) => setFormData({ ...formData, balance: e.target.value })}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl focus:bg-white focus:ring-2 focus:ring-indigo-500 outline-none transition-all font-medium"
+                  placeholder="0"
+                />
+              </div>
+
+              <div className="flex items-center gap-3 p-4 bg-slate-50 rounded-xl">
+                <input
+                  type="checkbox"
+                  id="isDefault"
+                  checked={formData.isDefault}
+                  onChange={(e) => setFormData({ ...formData, isDefault: e.target.checked })}
+                  className="w-5 h-5 rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                />
+                <label htmlFor="isDefault" className="text-sm font-medium text-slate-700 cursor-pointer select-none">
+                  Äáº·t lÃ m vÃ­ máº·c Ä‘á»‹nh
+                </label>
+              </div>
+
+              <div className="pt-2">
+                <button
+                  type="submit"
+                  className="w-full bg-indigo-600 text-white font-bold py-3.5 rounded-xl hover:bg-indigo-700 active:bg-indigo-800 transition-colors shadow-sm"
+                >
+                  LÆ°u láº¡i
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default Wallets;
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\frontend\src\store\useAuthStore.ts ====
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+
+interface User {
+  id: string;
+  email: string;
+}
+
+interface AuthState {
+  user: User | null;
+  token: string | null;
+  login: (user: User, token: string) => void;
+  logout: () => void;
+}
+
+export const useAuthStore = create<AuthState>()(
+  persist(
+    (set) => ({
+      user: null,
+      token: null,
+      login: (user, token) => set({ user, token }),
+      logout: () => set({ user: null, token: null }),
+    }),
+    {
+      name: 'auth-storage',
+    }
+  )
+);
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\frontend\src\App.tsx ====
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import Layout from './components/Layout';
+import Login from './pages/Login';
+import Register from './pages/Register';
+import Dashboard from './pages/Dashboard';
+import Transactions from './pages/Transactions';
+import Wallets from './pages/Wallets';
+import Categories from './pages/Categories';
+import Budgets from './pages/Budgets';
+import { useAuthStore } from './store/useAuthStore';
+
+const ProtectedRoute = ({ children }: { children: React.ReactNode }) => {
+  const token = useAuthStore((state) => state.token);
+  if (!token) {
+    return <Navigate to="/login" replace />;
+  }
+  return <>{children}</>;
+};
+
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/login" element={<Login />} />
+        <Route path="/register" element={<Register />} />
+        
+        <Route path="/" element={<ProtectedRoute><Layout /></ProtectedRoute>}>
+          <Route index element={<Navigate to="/dashboard" replace />} />
+          <Route path="dashboard" element={<Dashboard />} />
+          <Route path="transactions" element={<Transactions />} />
+          <Route path="wallets" element={<Wallets />} />
+          <Route path="categories" element={<Categories />} />
+          <Route path="budgets" element={<Budgets />} />
+        </Route>
+      </Routes>
+    </BrowserRouter>
+  );
+}
+
+export default App;
+
+
+==== C:\Users\PC\Documents\Coding\web-quan-ly-chi-tieu\frontend\src\main.tsx ====
+import { StrictMode } from 'react'
+import { createRoot } from 'react-dom/client'
+import './index.css'
+import App from './App.tsx'
+
+createRoot(document.getElementById('root')!).render(
+  <StrictMode>
+    <App />
+  </StrictMode>,
+)
+
+
