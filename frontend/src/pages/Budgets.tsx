@@ -15,6 +15,7 @@ interface Budget {
   category_id?: Category;
   amount: number;
   month: string;
+  spent?: number;
 }
 
 const Budgets = () => {
@@ -161,9 +162,8 @@ const Budgets = () => {
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           {budgets.map((budget) => {
-            // Tạm thời mock giá trị đã tiêu (spent). Sau này sẽ lấy từ API thống kê chi tiêu theo category trong tháng
-            // Do chưa có API thống kê chi tiết từng budget, mock 0
-            const spent = 0; 
+            // Lấy giá trị đã tiêu từ API, nếu không có thì mặc định là 0
+            const spent = budget.spent || 0; 
             const percent = Math.min((spent / budget.amount) * 100, 100);
             
             let colorClass = 'bg-emerald-500';

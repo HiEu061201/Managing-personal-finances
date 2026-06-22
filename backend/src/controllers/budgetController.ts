@@ -1,5 +1,7 @@
 import { Request, Response } from 'express';
 import Budget from '../models/Budget';
+import Transaction from '../models/Transaction';
+import mongoose from 'mongoose';
 
 export const getBudgets = async (req: Request, res: Response): Promise<void> => {
   try {
@@ -11,8 +13,39 @@ export const getBudgets = async (req: Request, res: Response): Promise<void> => 
       filter.month = month;
     }
 
-    const budgets = await Budget.find(filter).populate('category_id', 'name icon color');
-    res.json({ status: 'success', data: budgets });
+    const budgets = await Budget.find(filter).populate('category_id', 'name icon color').lean();
+
+    const budgetsWithSpent = await Promise.all(budgets.map(async (budget) => {
+      const transactionFilter: any = {
+        user_id: new mongoose.Types.ObjectId(userId as string),
+        type: 'expense'
+      };
+
+      if (budget.category_id) {
+        transactionFilter.category_id = new mongoose.Types.ObjectId((budget.category_id as any)._id.toString());
+      }
+
+      if (budget.month) {
+        const [year, m] = budget.month.split('-');
+        const firstDay = new Date(parseInt(year), parseInt(m) - 1, 1);
+        const lastDay = new Date(parseInt(year), parseInt(m), 0, 23, 59, 59);
+        transactionFilter.date = { $gte: firstDay, $lte: lastDay };
+      }
+
+      const transactions = await Transaction.aggregate([
+        { $match: transactionFilter },
+        { $group: { _id: null, total: { $sum: '$amount' } } }
+      ]);
+
+      const spent = transactions.length > 0 ? transactions[0].total : 0;
+
+      return {
+        ...budget,
+        spent
+      };
+    }));
+
+    res.json({ status: 'success', data: budgetsWithSpent });
   } catch (error: any) {
     res.status(500).json({ status: 'error', message: error.message });
   }
